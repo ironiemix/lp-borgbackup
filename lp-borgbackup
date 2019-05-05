@@ -1,0 +1,205 @@
+#!/bin/bash
+
+# where are the config directorys located?
+CONFDIR=/etc/lp-borgbackup/
+
+# get options
+while getopts 'a:g:s:f:k:t::hpqn' OPT; do
+  case $OPT in
+    a)  action=$OPTARG;;
+    f)  filter=$OPTARG;;
+    k)  klazi=$OPTARG;;
+    g)  groupkey=$OPTARG;;
+    s)  backupset=$OPTARG;;
+    t)  archive=$OPTARG;;
+    h)  hlp="yes";;
+    p)  partition="yes";;
+    q)  quiet="yes";;
+    *)  unknown="yes";;
+  esac
+done
+
+# usage
+HELP="
+    usage: $0 -a <action> [-s <backupset>]
+    
+    action:
+        backup:
+            Run backups. If a set is given with -s 
+            only for this set, else for all sets
+        list:
+            Show archive list for given backup set
+        listsets:  
+            Show all backupsets
+        check: 
+            Outputs the status for each backupset
+            in check_mk's local check format
+"
+
+# some helpers and error handling:
+info() { printf "%s %s\n" "$( date )" "$*" >&2; }
+trap 'echo $( date ) Backup interrupted >&2; exit 2' INT TERM
+
+
+# this function gets all backupsets
+# as a space separated list
+function getAllActiveSets () {
+    # get clean names of backup sets
+    AllActiveSets=""
+    for set in $CONFDIR/*; do 
+        set=${set##${CONFDIR}}
+        set=${set#/}
+
+        # check if the set is defined
+	if [ -f $CONFDIR/$set/backup.conf ]; then 
+            .  $CONFDIR/$set/backup.conf
+        else
+            echo "No config found:"
+            echo "$CONFDIR/$set/backup.conf"
+            continue
+        fi
+        # Skip if disabled
+        if [ "x${DISABLED}" == "xyes" ]; then 
+            echo "Config $set is disabled in config. Skipping."
+            continue
+        fi
+        AllActiveSets="${AllActiveSets} $set"
+    done
+}
+
+
+# this function iterates over the configurations
+# and creates a new backup for each backup set
+function runBackups {
+    for set in $CONFDIR/*; do 
+        # get clean names of backup sets
+        set=${set##${CONFDIR}}
+        set=${set#/}
+        echo $set
+
+        # check if the set is defined
+        if [ -f $CONFDIR/$set/backup.conf ]; then 
+            . $CONFDIR/$set/backup.conf
+        else
+            echo "No config found:"
+            echo "$CONFDIR/$set/backup.conf"
+            continue
+        fi
+        # Skip if disabled
+        if [ "x${DISABLED}" == "xyes" ]; then 
+            echo "Config $set is disabled in config. Skipping."
+            continue
+        fi
+
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+
+	if [ "x$LVM" != "x" ]; then 
+	    info "Creating snapshot"
+	    /sbin/lvcreate -s -L 5G -n ${LVM}_backupsnap ${VG}/${LVM} > /dev/null 2>&1
+	    info "Mounting snapshot to $SOURCEDIR"
+	    mkdir -p $SOURCEDIR
+	    mount ${VG}/${LVM}_backupsnap $SOURCEDIR 
+        fi
+
+        info "Starting backup for $SETNAME"
+        info "Target is: $REPOSITORY"
+
+        # Run backup command
+        $BORGCOMMAND $REPOSITORY::'{hostname}-{now}' $SOURCEDIR
+
+	info "Pruning old backupsets"
+	pruneBackups $SETNAME
+        	
+	
+	if [ "x$LVM" != "x" ]; then 
+	    info "Unmounting snapshot"
+	    umount $SOURCEDIR 
+	    info " Deleting snapshot"
+	    /sbin/lvremove -f ${VG}/${LVM} > /dev/null 2>&1
+        fi
+
+    done
+}
+
+# this function iterates over the configurations
+# and lists the backups in the backup sets
+# optional: a configuration can be given to just list 
+# this backupset
+
+function listBackups() {
+    SINGLE=$1
+    if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
+        . $CONFDIR/$SINGLE/backup.conf
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+        borg list $REPOSITORY
+        return
+    fi
+
+}
+
+function listFiles() {
+    SINGLE=$1
+    ARCHIVE=$2
+    if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
+        . $CONFDIR/$SINGLE/backup.conf
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+        borg list $REPOSITORY::$ARCHIVE
+        return
+    fi
+
+}
+
+function pruneBackups() {
+    SINGLE=$1
+    if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
+        . $CONFDIR/$SINGLE/backup.conf
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+        borg prune --list  \
+                    --prefix '{hostname}-' \
+                    --show-rc                       \
+                    --keep-daily    ${KEEP_DAILY}               \
+                    --keep-weekly   ${KEEP_WEEKLY}               \
+                    --keep-monthly  ${KEEP_MONTHLY}     \
+                    $REPOSITORY
+        return
+    fi
+}
+
+#function checkBackups() {
+#    
+#
+#}
+
+case $action in 
+"backup") 
+    runBackups
+;;
+"list") 
+    listBackups $backupset
+;;
+
+"listfiles") 
+    listFiles $backupset $archive
+;;
+"listsets") 
+    getAllActiveSets
+    echo "Configuration directory is $CONFDIR."
+    echo "Listing active backupsets:"
+    for s in $AllActiveSets; do 
+        echo $s
+    done
+;;
+*)
+    echo "$HELP"
+    exit 1
+;;
+esac
+
+
+
+
+
