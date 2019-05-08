@@ -1,9 +1,15 @@
 #!/bin/bash
 
 # where are the config directorys located?
-CONFDIR=/etc/lp-borgbackup/
+CONFDIR="/etc/lp-borgbackup/"
+# Status dir
+STATUSDIR="/var/lib/lp-borgbackup/"
 
 # get options
+
+# init backupset with empty string
+backupset=""
+
 while getopts 'a:g:s:f:k:t::hpqn' OPT; do
   case $OPT in
     a)  action=$OPTARG;;
@@ -70,12 +76,14 @@ function getAllActiveSets () {
 
 # this function iterates over the configurations
 # and creates a new backup for each backup set
-function runBackups {
-    for set in $CONFDIR/*; do 
-        # get clean names of backup sets
-        set=${set##${CONFDIR}}
-        set=${set#/}
-        echo $set
+function runBackups { 
+    if [ "x$backupset" != "x" ]; then 
+	setsToWorkOn=$backupset
+    else
+	getAllActiveSets
+	setsToWorkOn=$AllActiveSets
+    fi
+    for set in $setsToWorkOn; do 
 
         # check if the set is defined
         if [ -f $CONFDIR/$set/backup.conf ]; then 
@@ -92,8 +100,9 @@ function runBackups {
         fi
 
         # setting repository passphrase from config
-        export BORG_PASSPHRASE
-
+	export BORG_PASSPHRASE
+	
+	# if there is an LVM an VG otion, work with snapshots
 	if [ "x$LVM" != "x" ]; then 
 	    info "Creating snapshot"
 	    /sbin/lvcreate -s -L 5G -n ${LVM}_backupsnap ${VG}/${LVM} > /dev/null 2>&1
@@ -106,10 +115,15 @@ function runBackups {
         info "Target is: $REPOSITORY"
 
         # Run backup command
-        $BORGCOMMAND $REPOSITORY::'{hostname}-{now}' $SOURCEDIR
+        $BORGCOMMAND $REPOSITORY::$SETNAME-'{hostname}-{now}' $SOURCEDIR
 
 	info "Pruning old backupsets"
 	pruneBackups $SETNAME
+	info "Writing new status to $STATUSDIR/$SETNAME.list"
+	borg list $REPOSITORY > $STATUSDIR/$SETNAME.list
+	info "Writing new info to $STATUSDIR/$SETNAME.info"
+	borg info $REPOSITORY > $STATUSDIR/$SETNAME.info
+
         	
 	
 	if [ "x$LVM" != "x" ]; then 
@@ -159,7 +173,7 @@ function pruneBackups() {
         # setting repository passphrase from config
         export BORG_PASSPHRASE
         borg prune --list  \
-                    --prefix '{hostname}-' \
+                    --prefix $SETNAME-'{hostname}-' \
                     --show-rc                       \
                     --keep-daily    ${KEEP_DAILY}               \
                     --keep-weekly   ${KEEP_WEEKLY}               \
@@ -169,14 +183,31 @@ function pruneBackups() {
     fi
 }
 
-#function checkBackups() {
-#    
-#
-#}
+
+function checkBackups() {
+    if [ "x$backupset" != "x" ]; then 
+	setsToWorkOn=$backupset
+    else
+	getAllActiveSets
+	setsToWorkOn=$AllActiveSets
+    fi
+
+    for set in $setsToWorkOn; do 
+	EXITCODE=3
+	echo "$EXITCODE BORG_$set"
+    done
+
+    
+
+}
 
 case $action in 
+"check")
+    checkBackups $backupset
+;;
 "backup") 
-    runBackups
+    getAllActiveSets
+    runBackups $backupset
 ;;
 "list") 
     listBackups $backupset
