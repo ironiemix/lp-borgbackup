@@ -166,6 +166,18 @@ function listFiles() {
 
 }
 
+function deleteBackup() {
+    SINGLE=$1
+    ARCHIVE=$2
+    if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
+        . $CONFDIR/$SINGLE/backup.conf
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+        borg delete $REPOSITORY::$ARCHIVE
+        return
+    fi
+}
+
 function pruneBackups() {
     SINGLE=$1
     if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
@@ -197,8 +209,6 @@ function checkBackups() {
 	echo "$EXITCODE BORG_$set"
     done
 
-    
-
 }
 
 case $action in 
@@ -214,7 +224,21 @@ case $action in
 ;;
 
 "listfiles") 
+    if [ "x$archive" == "x" ]; then 
+	    echo "For action 'listfiles' a single archive has to be given with option '-t'"
+	    echo "You can list the archives with action 'list'"
+	    exit 1
+    fi
     listFiles $backupset $archive
+;;
+
+"delete") 
+    if [ "x$archive" == "x" ]; then 
+	    echo "For action 'delete' a single archive has to be given with option '-t'"
+	    echo "You can list the archives with action 'list'"
+	    exit 1
+    fi
+    deleteBackup $backupset $archive
 ;;
 "listsets") 
     getAllActiveSets
