@@ -4,6 +4,8 @@
 CONFDIR="/etc/lp-borgbackup/"
 # Status dir
 STATUSDIR="/var/lib/lp-borgbackup/"
+INFO_WARN=28
+INFO_CRIT=48
 
 # get options
 
@@ -225,7 +227,27 @@ function checkBackups() {
 
     for set in $setsToWorkOn; do 
 	EXITCODE=3
-	echo "$EXITCODE BORG_$set"
+	infofile=${STATUSDIR}/${set}.info
+	listfile=${STATUSDIR}/${set}.list
+
+	last_infotime=$(stat --format %Z ${infofile})
+	now=$(date +%s)
+	infoage_hrs=$(( ( now - last_infotime ) / 3600 ))
+
+	agecode=0
+	if [ $infoage_hrs -gt $INFO_WARN ]; then 
+		agecode=1
+	elif [ $infoage_hrs -gt $INFO_CRIT ]; then 
+		agecode=2
+	fi
+
+	last_archivetime=$(date --date="$(tail -n 1 ${listfile}| awk '{print $3 " " $4}')" +%s)
+	archiveage_hrs=$(( ( now - last_archivetime ) / 3600 ))
+
+	sizedata=$(grep All\ archives ${infofile} | awk '{print "original="$3"|compressed="$5"|deduplicated="$7}')
+	
+        
+	echo "$EXITCODE BORG_$set $infoage_hrs $archiveage_hrs $sizedata"
     done
 
 }
