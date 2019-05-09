@@ -27,16 +27,25 @@ done
 
 # usage
 HELP="
-    usage: $0 -a <action> [-s <backupset>]
+    usage: $0 -a <action> [-s <backupset>] [-t archive]
     
     action:
         backup:
             Run backups. If a set is given with -s 
             only for this set, else for all sets
+	delete: 
+	    Delete a single archive in a repo.  
+	    Options-s and -t have to be given.
         list:
             Show archive list for given backup set
+	listfiles
+	    Show file list for given archive (-t) in a 
+	    backup set (-s). 
         listsets:  
             Show all backupsets
+	initrepo:
+            Initializes a repo for a newly configured 
+	    backup set.
         check: 
             Outputs the status for each backupset
             in check_mk's local check format
@@ -195,6 +204,16 @@ function pruneBackups() {
     fi
 }
 
+function initRepo () {
+    SINGLE=$1
+    if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
+        . $CONFDIR/$SINGLE/backup.conf
+        # setting repository passphrase from config
+        export BORG_PASSPHRASE
+	borg init --encryption=repokey $REPOSITORY
+    fi
+}
+
 
 function checkBackups() {
     if [ "x$backupset" != "x" ]; then 
@@ -221,6 +240,10 @@ case $action in
 ;;
 "list") 
     listBackups $backupset
+;;
+
+"initrepo") 
+    initRepo $backupset
 ;;
 
 "listfiles") 
