@@ -3,9 +3,10 @@
 # where are the config directorys located?
 CONFDIR="/etc/lp-borgbackup/"
 # Status dir
-STATUSDIR="/var/lib/lp-borgbackup/"
-INFO_WARN=28
-INFO_CRIT=48
+STATUSDIR="/var/lib/lp-borgbackup"
+# defaults
+WRNHRS=28
+CRITHRS=48
 
 # get options
 
@@ -230,24 +231,81 @@ function checkBackups() {
 	infofile=${STATUSDIR}/${set}.info
 	listfile=${STATUSDIR}/${set}.list
 
+	# empty perfdata
+	perfdata="num_archives=0|originalsize=0|compressedsize=0|deduplicatedsize=0"
+
+	# read config to get individual values
+        . $CONFDIR/$set/backup.conf
+
+	if [ ! -f ${infofile} ]; then 
+		echo "2 BORG_$set $perfdata No infofile found: ${infofile}."
+		continue
+	fi
+	if [ ! -f ${listfile} ]; then 
+		echo "2 BORG_$set $perfdata No listfile found: ${listfile}."
+		continue
+	fi
+
 	last_infotime=$(stat --format %Z ${infofile})
 	now=$(date +%s)
 	infoage_hrs=$(( ( now - last_infotime ) / 3600 ))
 
-	agecode=0
-	if [ $infoage_hrs -gt $INFO_WARN ]; then 
-		agecode=1
-	elif [ $infoage_hrs -gt $INFO_CRIT ]; then 
-		agecode=2
+	# get number of archives, continue with critical if none are found
+	num_archives=$(grep ^${set} ${listfile} | wc -l)
+	if [ $num_archives -eq 0 ]; then
+		echo "2 BORG_$set $perfdata No archives found in listfile: ${listfile}."
+		continue
 	fi
 
+
 	last_archivetime=$(date --date="$(tail -n 1 ${listfile}| awk '{print $3 " " $4}')" +%s)
+	if [ "x$last_archivetime" == "x" ]; then 
+		echo "3 BORG_$set $perfdata There is a problem getting the time of the last archive from ${listfile}"
+		continue
+	fi
+
 	archiveage_hrs=$(( ( now - last_archivetime ) / 3600 ))
 
-	sizedata=$(grep All\ archives ${infofile} | awk '{print "original="$3"|compressed="$5"|deduplicated="$7}')
+
+	#stats for performace data: sizes
+	originalsize=$(grep All\ archives ${infofile} | awk '{print $3'})
+	unit=$(grep All\ archives ${infofile} | awk '{print $4'})
+	if [ "x$unit" == "xMB" ]; then
+	    originalsize=$(echo "scale=2; $originalsize/1024" | bc)
+        fi
+
+	compressedsize=$(grep All\ archives ${infofile} | awk '{print $5'})
+	unit=$(grep All\ archives ${infofile} | awk '{print $6'})
+	if [ "x$unit" == "xMB" ]; then
+	    compressedsize=$(echo "scale=2; $compressedsize/1024" | bc)
+        fi
+	deduplicatedsize=$(grep All\ archives ${infofile} | awk '{print $7'})
+
+	unit=$(grep All\ archives ${infofile} | awk '{print $8'})
+	if [ "x$unit" == "xMB" ]; then
+	    deduplicatedsize=$(echo "scale=2; $deduplicatedsize/1024" | bc)
+        fi
+
+	msg="Last archive is ${archiveage_hrs}hrs old."
+
+	if [ $archiveage_hrs -le $WRNHRS ]; then 
+		EXITCODE=0
+	fi
+
+	if [ $archiveage_hrs -gt $WRNHRS ]; then 
+		EXITCODE=1
+		addmsg="(Warn at ${WRNHRS}hrs)"
+	fi
+	if [ $archiveage_hrs -gt $CRITHRS ]; then 
+		EXITCODE=2
+		addmsg="(Crit at ${CRITHRS}hrs)"
+	fi
+	msg="$msg $addmsg"
+	perfdata="num_archives=$num_archives|originalsize=$originalsize|compressedsize=$compressedsize|deduplicatedsize=$deduplicatedsize"
+
 	
         
-	echo "$EXITCODE BORG_$set $infoage_hrs $archiveage_hrs $sizedata"
+	echo "$EXITCODE BORG_$set $perfdata $msg"
     done
 
 }
