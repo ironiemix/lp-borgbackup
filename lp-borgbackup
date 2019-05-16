@@ -4,6 +4,14 @@
 CONFDIR="/etc/lp-borgbackup/"
 # Status dir
 STATUSDIR="/var/lib/lp-borgbackup"
+# Secrets export dir
+SECRETSDIR="/root/borg-secrets"
+mkdir -p $SECRETSDIR
+chown -R root: $SECRETSDIR
+chmod 700 $SECRETSDIR
+chmod 600 $SECRETSDIR/*
+
+
 # defaults
 WRNHRS=28
 CRITHRS=48
@@ -52,6 +60,9 @@ HELP="
         check: 
             Outputs the status for each backupset
             in check_mk's local check format
+	secrets:
+	    Prints the repo passphrase and the repo key
+	    to the command line
 "
 
 # some helpers and error handling:
@@ -207,14 +218,55 @@ function pruneBackups() {
     fi
 }
 
-function initRepo () {
+function initRepo() {
     SINGLE=$1
     if [ -f $CONFDIR/$SINGLE/backup.conf ]; then 
         . $CONFDIR/$SINGLE/backup.conf
         # setting repository passphrase from config
         export BORG_PASSPHRASE
 	borg init --encryption=repokey $REPOSITORY
+    else
+	echo "Usage: $0 -a initrepo -s <backupset>"
     fi
+}
+
+function exportSecrets() {
+    echo "Keys and passphrases will be stored in $SECRETSDIR."
+    echo "Be shure to backup this directory to a safe place and"
+    echo "delete it afterwards."
+    echo
+
+    if [ "x$backupset" != "x" ]; then 
+	setsToWorkOn=$backupset
+    else
+	getAllActiveSets
+	setsToWorkOn=$AllActiveSets
+    fi
+    for set in $setsToWorkOn; do 
+        # check if the set is defined
+        if [ -f $CONFDIR/$set/backup.conf ]; then 
+            . $CONFDIR/$set/backup.conf
+        else
+            echo "No config found:"
+            echo "$CONFDIR/$set/backup.conf"
+            continue
+        fi
+        # Skip if disabled
+        if [ "x${DISABLED}" == "xyes" ]; then 
+            echo "Config $set is disabled in config. Skipping."
+            continue
+        fi
+	export BORG_PASSPHRASE
+
+	echo -n "Exporting key and passphrase of set $set..."
+
+	borg key export $REPOSITORY $SECRETSDIR/${set}.key
+	borg key export --paper $REPOSITORY $SECRETSDIR/${set}.paperkey
+
+	echo $BORG_PASSPHRASE > $SECRETSDIR/${set}.passphrase
+	echo " done."
+
+    done
 }
 
 
@@ -350,6 +402,10 @@ case $action in
     for s in $AllActiveSets; do 
         echo $s
     done
+;;
+"secrets")
+    getAllActiveSets
+    exportSecrets $backupset
 ;;
 *)
     echo "$HELP"
